@@ -490,6 +490,57 @@ RSpec.describe Spree::OrderContents, type: :model do
     end
   end
 
+  context "#remove_line_items", :focus do
+    it "ensures updated shipments" do
+      line_item = subject.add(variant, 1)
+      expect(subject.order).to receive(:ensure_updated_shipments)
+      subject.remove_line_items([line_item])
+    end
+
+    context 'when passing a single line item' do
+      it 'should remove line_item' do
+        line_item = subject.add(variant, 1)
+        subject.remove_line_items([line_item])
+
+        expect(order.reload.line_items).to_not include(line_item)
+      end
+    end
+
+    context 'when passing the same line item twice' do
+      it 'should remove line_item' do
+        line_item = subject.add(variant, 1)
+        subject.remove_line_items([line_item, line_item])
+
+        expect(order.reload.line_items).to_not include(line_item)
+      end
+    end
+
+    context 'when passing two line items' do
+      it 'should remove both line_items' do
+        line_item1 = subject.add(variant, 1)
+        line_item2 = subject.add(variant, 1)
+
+        subject.remove_line_items([line_item1, line_item2])
+
+        expect(order.reload.line_items).to_not include(line_item1, line_item2)
+      end
+    end
+
+    it "should update order totals" do
+      expect(order.item_total.to_f).to eq(0.00)
+      expect(order.total.to_f).to eq(0.00)
+
+      line_item = subject.add(variant, 2)
+
+      expect(order.item_total.to_f).to eq(39.98)
+      expect(order.total.to_f).to eq(39.98)
+
+      subject.remove_line_item(line_item)
+      expect(order.item_total.to_f).to eq(0.00)
+      expect(order.total.to_f).to eq(0.00)
+    end
+  end
+
   context "update cart" do
     let!(:shirt) { subject.add variant, 1 }
 

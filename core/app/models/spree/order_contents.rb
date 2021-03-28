@@ -52,6 +52,13 @@ module Spree
       after_add_or_remove([line_item], options).first
     end
 
+    def remove_line_items(line_items)
+      line_items.each do |line_item|
+        order.line_items.destroy(line_item)
+      end
+      after_add_or_remove(line_items)
+    end
+
     def update_cart(params)
       if order.update(params)
         unless order.completed?
