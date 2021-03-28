@@ -15,19 +15,20 @@ module Spree
     # the promotions system accurate and performant. Here they can plug custom
     # handler to activate promos as they wish once an item is added to cart
     class Cart
-      attr_reader :line_item, :order
+      attr_reader :line_items, :order
       attr_accessor :error, :success
 
-      def initialize(order, line_item = nil)
-        @order, @line_item = order, line_item
+      def initialize(order, line_items = nil)
+        @order, @line_items = order, Array.wrap(line_items)
       end
 
       def activate
         promotions.each do |promotion|
           actual_promo_code = promotion_code(promotion)
+          eligible_line_items = line_items.filter { |line_item| promotion.eligible?(line_item, promotion_code: actual_promo_code) }
 
-          if (line_item && promotion.eligible?(line_item, promotion_code: actual_promo_code)) || promotion.eligible?(order, promotion_code: actual_promo_code)
-            promotion.activate(line_items: [line_item], order: order, promotion_code: promotion_code(promotion))
+          if eligible_line_items.present? || promotion.eligible?(order, promotion_code: actual_promo_code)
+            promotion.activate(line_items: eligible_line_items.presence, order: order, promotion_code: promotion_code(promotion))
           end
         end
       end
