@@ -38,6 +38,15 @@ module Spree
       after_add_or_remove([line_item], options).first
     end
 
+    def remove_many(variants)
+      params = variants.group_by { |variant| variant }.transform_values(&:size)
+      line_items = params.map do |variant, quantity|
+        remove_from_line_item(variant, quantity)
+      end
+
+      after_add_or_remove(line_items)
+    end
+
     def remove_line_item(line_item, options = {})
       order.line_items.destroy(line_item)
       after_add_or_remove([line_item], options).first

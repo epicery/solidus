@@ -347,6 +347,108 @@ RSpec.describe Spree::OrderContents, type: :model do
     end
   end
 
+  context "#remove_many" do
+    let(:variant2) { create(:variant) }
+
+    context "given an invalid variant" do
+      it "raises an exception" do
+        expect {
+          subject.remove_many([variant])
+        }.to raise_error(ActiveRecord::RecordNotFound)
+      end
+    end
+
+    context 'when only one variant is passed' do
+      it 'should remove one quantity' do
+        line_item = subject.add(variant, 3)
+        subject.remove_many([variant])
+        expect(line_item.reload.quantity).to eq(2)
+      end
+    end
+
+    context 'when the same variant is passed twice' do
+      it 'should remove two quantity' do
+        line_item = subject.add(variant, 3)
+        subject.remove_many([variant, variant])
+        expect(line_item.reload.quantity).to eq(1)
+      end
+    end
+
+    context 'when the same variant is passed too much times' do
+      it 'should remove the line item' do
+        line_item = subject.add(variant, 3)
+        subject.remove_many([variant, variant, variant, variant])
+
+        expect { line_item.reload }.to raise_error(ActiveRecord::RecordNotFound)
+      end
+    end
+
+    context 'when passing two different variants' do
+      it 'should remove one quantity for both variants' do
+        line_item1 = subject.add(variant, 3)
+        line_item2 = subject.add(variant2, 3)
+
+        subject.remove_many([variant, variant2])
+
+        expect(line_item1.reload.quantity).to eq(2)
+        expect(line_item2.reload.quantity).to eq(2)
+      end
+    end
+
+    context 'when passing multiple variants multiple time' do
+      it 'should remove two quantity for both variants' do
+        line_item1 = subject.add(variant, 3)
+        line_item2 = subject.add(variant2, 3)
+
+        line_items = subject.remove_many([variant, variant2, variant2, variant])
+
+        expect(line_item1.reload.quantity).to eq(1)
+        expect(line_item2.reload.quantity).to eq(1)
+      end
+    end
+
+    it "ensures updated shipments" do
+      subject.add(variant, 1)
+      expect(subject.order).to receive(:ensure_updated_shipments)
+      subject.remove_many([variant])
+    end
+
+    it 'should reduce line_item quantity if quantity is less the line_item quantity' do
+      line_item = subject.add(variant, 3)
+      subject.remove_many([variant])
+
+      expect(line_item.reload.quantity).to eq(2)
+    end
+
+    it 'should remove line_item if quantity matches line_item quantity' do
+      subject.add(variant, 1)
+      subject.remove_many([variant])
+
+      expect(order.reload.find_line_item_by_variant(variant)).to be_nil
+    end
+
+    it 'should remove line_item if quantity is greater than line_item quantity' do
+      subject.add(variant, 1)
+      subject.remove_many([variant, variant])
+
+      expect(order.reload.find_line_item_by_variant(variant)).to be_nil
+    end
+
+    it "should update order totals" do
+      expect(order.item_total.to_f).to eq(0.00)
+      expect(order.total.to_f).to eq(0.00)
+
+      subject.add(variant, 2)
+
+      expect(order.item_total.to_f).to eq(39.98)
+      expect(order.total.to_f).to eq(39.98)
+
+      subject.remove_many([variant])
+      expect(order.item_total.to_f).to eq(19.99)
+      expect(order.total.to_f).to eq(19.99)
+    end
+  end
+
   context "#remove_line_item" do
     context 'given a shipment' do
       it "ensure shipment calls update_amounts instead of order calling ensure_updated_shipments" do
