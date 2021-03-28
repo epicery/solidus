@@ -21,17 +21,17 @@ module Spree
     # @return [Spree::LineItem]
     def add(variant, quantity = 1, options = {})
       line_item = add_to_line_item(variant, quantity, options)
-      after_add_or_remove(line_item, options)
+      after_add_or_remove([line_item], options).first
     end
 
     def remove(variant, quantity = 1, options = {})
       line_item = remove_from_line_item(variant, quantity, options)
-      after_add_or_remove(line_item, options)
+      after_add_or_remove([line_item], options).first
     end
 
     def remove_line_item(line_item, options = {})
       order.line_items.destroy(line_item)
-      after_add_or_remove(line_item, options)
+      after_add_or_remove([line_item], options).first
     end
 
     def update_cart(params)
@@ -70,13 +70,13 @@ module Spree
 
     private
 
-    def after_add_or_remove(line_item, options = {})
+    def after_add_or_remove(line_items, options = {})
       reload_totals
       shipment = options[:shipment]
       shipment.present? ? shipment.update_amounts : order.ensure_updated_shipments
-      PromotionHandler::Cart.new(order, line_item).activate
+      PromotionHandler::Cart.new(order, line_items).activate
       reload_totals
-      line_item
+      line_items
     end
 
     def reload_totals
