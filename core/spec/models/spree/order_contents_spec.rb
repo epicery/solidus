@@ -147,6 +147,134 @@ RSpec.describe Spree::OrderContents, type: :model do
     end
   end
 
+  context "#add_many" do
+    let(:variant2) { create(:variant) }
+
+    context 'when only one variant is passed' do
+      it 'should add one line item' do
+        line_items = subject.add_many([variant])
+        expect(order.line_items.size).to eq(1)
+        expect(line_items.map(&:quantity)).to contain_exactly(1)
+      end
+    end
+
+    context 'when the same variant is passed twice' do
+      it 'should add one line item' do
+        line_items = subject.add_many([variant, variant])
+        expect(order.line_items.size).to eq(1)
+        expect(line_items.map(&:quantity)).to contain_exactly(2)
+      end
+    end
+
+    context 'when passing two different variants' do
+      it 'should add one line item' do
+        line_items = subject.add_many([variant, variant2])
+        expect(order.line_items.size).to eq(2)
+        expect(line_items.map(&:quantity)).to contain_exactly(1, 1)
+      end
+    end
+
+    context 'when passing multiple variants multiple time' do
+      it 'should add one line item' do
+        line_items = subject.add_many([variant, variant2, variant2, variant])
+        expect(order.line_items.size).to eq(2)
+        expect(line_items.map(&:quantity)).to contain_exactly(2, 2)
+      end
+    end
+
+    it "ensures updated shipments" do
+      expect(subject.order).to receive(:ensure_updated_shipments)
+      subject.add_many([variant])
+    end
+
+    it 'should add line item if one does not exist' do
+      line_items = subject.add_many([variant])
+      expect(line_items.map(&:quantity)).to contain_exactly(1)
+      expect(order.line_items.size).to eq(1)
+    end
+
+    it 'should update line item if one exists' do
+      subject.add_many([variant])
+      line_items = subject.add_many([variant])
+      expect(line_items.map(&:quantity)).to contain_exactly(2)
+      expect(order.line_items.size).to eq(1)
+    end
+
+    it "should update order totals" do
+      expect(order.item_total.to_f).to eq(0.00)
+      expect(order.total.to_f).to eq(0.00)
+
+      subject.add_many([variant])
+
+      expect(order.item_total.to_f).to eq(19.99)
+      expect(order.total.to_f).to eq(19.99)
+    end
+
+    context "running promotions" do
+      let(:promotion) { create(:promotion, apply_automatically: true) }
+      let(:calculator) { Spree::Calculator::FlatRate.new(preferred_amount: 10) }
+
+      shared_context "discount changes order total" do
+        before { subject.add_many([variant]) }
+        it { expect(subject.order.total).not_to eq variant.price }
+      end
+
+      context "one active order promotion" do
+        let!(:action) { Spree::Promotion::Actions::CreateAdjustment.create(promotion: promotion, calculator: calculator) }
+
+        it "creates valid discount on order" do
+          subject.add_many([variant])
+          expect(subject.order.adjustments.to_a.sum(&:amount)).not_to eq 0
+        end
+
+        include_context "discount changes order total"
+      end
+
+      context "one active line item promotion" do
+        let!(:action) { Spree::Promotion::Actions::CreateItemAdjustments.create(promotion: promotion, calculator: calculator) }
+
+        it "creates valid discount on order" do
+          subject.add_many([variant])
+          expect(subject.order.line_item_adjustments.to_a.sum(&:amount)).not_to eq 0
+        end
+
+        include_context "discount changes order total"
+      end
+    end
+
+    describe 'tax calculations' do
+      let!(:zone) { create(:global_zone) }
+      let!(:tax_rate) do
+        create(:tax_rate, zone: zone, tax_categories: [variant.tax_category])
+      end
+
+      context 'when the order has a taxable address' do
+        before do
+          expect(order.tax_address.country_id).to be_present
+        end
+
+        it 'creates a tax adjustment' do
+          order_contents.add_many([variant])
+          line_item = order.find_line_item_by_variant(variant)
+          expect(line_item.adjustments.tax.count).to eq(1)
+        end
+      end
+
+      context 'when the order does not have a taxable address' do
+        before do
+          order.update!(ship_address: nil, bill_address: nil)
+          expect(order.tax_address.country_id).to be_nil
+        end
+
+        it 'creates a tax adjustment' do
+          order_contents.add_many([variant])
+          line_item = order.find_line_item_by_variant(variant)
+          expect(line_item.adjustments.tax.count).to eq(0)
+        end
+      end
+    end
+  end
+
   context "#remove" do
     context "given an invalid variant" do
       it "raises an exception" do
