@@ -96,13 +96,18 @@ module Spree
       !active?
     end
 
-    def activate(order:, line_item: nil, user: nil, path: nil, promotion_code: nil)
+    def activate(order:, line_items: nil, user: nil, path: nil, promotion_code: nil, line_item: nil)
       return unless self.class.order_activatable?(order)
+
+      if line_item
+        Spree::Deprecation.warn("Passing line_item: is deprecated. Use line_items: instead", caller)
+        line_items = [line_item]
+      end
 
       payload = {
         order: order,
         promotion: self,
-        line_item: line_item,
+        line_items: line_items,
         user: user,
         path: path,
         promotion_code: promotion_code

@@ -147,6 +147,134 @@ RSpec.describe Spree::OrderContents, type: :model do
     end
   end
 
+  context "#add_many" do
+    let(:variant2) { create(:variant) }
+
+    context 'when only one variant is passed' do
+      it 'should add one line item' do
+        line_items = subject.add_many([variant])
+        expect(order.line_items.size).to eq(1)
+        expect(line_items.map(&:quantity)).to contain_exactly(1)
+      end
+    end
+
+    context 'when the same variant is passed twice' do
+      it 'should add one line item' do
+        line_items = subject.add_many([variant, variant])
+        expect(order.line_items.size).to eq(1)
+        expect(line_items.map(&:quantity)).to contain_exactly(2)
+      end
+    end
+
+    context 'when passing two different variants' do
+      it 'should add one line item' do
+        line_items = subject.add_many([variant, variant2])
+        expect(order.line_items.size).to eq(2)
+        expect(line_items.map(&:quantity)).to contain_exactly(1, 1)
+      end
+    end
+
+    context 'when passing multiple variants multiple time' do
+      it 'should add one line item' do
+        line_items = subject.add_many([variant, variant2, variant2, variant])
+        expect(order.line_items.size).to eq(2)
+        expect(line_items.map(&:quantity)).to contain_exactly(2, 2)
+      end
+    end
+
+    it "ensures updated shipments" do
+      expect(subject.order).to receive(:ensure_updated_shipments)
+      subject.add_many([variant])
+    end
+
+    it 'should add line item if one does not exist' do
+      line_items = subject.add_many([variant])
+      expect(line_items.map(&:quantity)).to contain_exactly(1)
+      expect(order.line_items.size).to eq(1)
+    end
+
+    it 'should update line item if one exists' do
+      subject.add_many([variant])
+      line_items = subject.add_many([variant])
+      expect(line_items.map(&:quantity)).to contain_exactly(2)
+      expect(order.line_items.size).to eq(1)
+    end
+
+    it "should update order totals" do
+      expect(order.item_total.to_f).to eq(0.00)
+      expect(order.total.to_f).to eq(0.00)
+
+      subject.add_many([variant])
+
+      expect(order.item_total.to_f).to eq(19.99)
+      expect(order.total.to_f).to eq(19.99)
+    end
+
+    context "running promotions" do
+      let(:promotion) { create(:promotion, apply_automatically: true) }
+      let(:calculator) { Spree::Calculator::FlatRate.new(preferred_amount: 10) }
+
+      shared_context "discount changes order total" do
+        before { subject.add_many([variant]) }
+        it { expect(subject.order.total).not_to eq variant.price }
+      end
+
+      context "one active order promotion" do
+        let!(:action) { Spree::Promotion::Actions::CreateAdjustment.create(promotion: promotion, calculator: calculator) }
+
+        it "creates valid discount on order" do
+          subject.add_many([variant])
+          expect(subject.order.adjustments.to_a.sum(&:amount)).not_to eq 0
+        end
+
+        include_context "discount changes order total"
+      end
+
+      context "one active line item promotion" do
+        let!(:action) { Spree::Promotion::Actions::CreateItemAdjustments.create(promotion: promotion, calculator: calculator) }
+
+        it "creates valid discount on order" do
+          subject.add_many([variant])
+          expect(subject.order.line_item_adjustments.to_a.sum(&:amount)).not_to eq 0
+        end
+
+        include_context "discount changes order total"
+      end
+    end
+
+    describe 'tax calculations' do
+      let!(:zone) { create(:global_zone) }
+      let!(:tax_rate) do
+        create(:tax_rate, zone: zone, tax_categories: [variant.tax_category])
+      end
+
+      context 'when the order has a taxable address' do
+        before do
+          expect(order.tax_address.country_id).to be_present
+        end
+
+        it 'creates a tax adjustment' do
+          order_contents.add_many([variant])
+          line_item = order.find_line_item_by_variant(variant)
+          expect(line_item.adjustments.tax.count).to eq(1)
+        end
+      end
+
+      context 'when the order does not have a taxable address' do
+        before do
+          order.update!(ship_address: nil, bill_address: nil)
+          expect(order.tax_address.country_id).to be_nil
+        end
+
+        it 'creates a tax adjustment' do
+          order_contents.add_many([variant])
+          line_item = order.find_line_item_by_variant(variant)
+          expect(line_item.adjustments.tax.count).to eq(0)
+        end
+      end
+    end
+  end
+
   context "#remove" do
     context "given an invalid variant" do
       it "raises an exception" do
@@ -219,6 +347,108 @@ RSpec.describe Spree::OrderContents, type: :model do
     end
   end
 
+  context "#remove_many" do
+    let(:variant2) { create(:variant) }
+
+    context "given an invalid variant" do
+      it "raises an exception" do
+        expect {
+          subject.remove_many([variant])
+        }.to raise_error(ActiveRecord::RecordNotFound)
+      end
+    end
+
+    context 'when only one variant is passed' do
+      it 'should remove one quantity' do
+        line_item = subject.add(variant, 3)
+        subject.remove_many([variant])
+        expect(line_item.reload.quantity).to eq(2)
+      end
+    end
+
+    context 'when the same variant is passed twice' do
+      it 'should remove two quantity' do
+        line_item = subject.add(variant, 3)
+        subject.remove_many([variant, variant])
+        expect(line_item.reload.quantity).to eq(1)
+      end
+    end
+
+    context 'when the same variant is passed too much times' do
+      it 'should remove the line item' do
+        line_item = subject.add(variant, 3)
+        subject.remove_many([variant, variant, variant, variant])
+
+        expect { line_item.reload }.to raise_error(ActiveRecord::RecordNotFound)
+      end
+    end
+
+    context 'when passing two different variants' do
+      it 'should remove one quantity for both variants' do
+        line_item1 = subject.add(variant, 3)
+        line_item2 = subject.add(variant2, 3)
+
+        subject.remove_many([variant, variant2])
+
+        expect(line_item1.reload.quantity).to eq(2)
+        expect(line_item2.reload.quantity).to eq(2)
+      end
+    end
+
+    context 'when passing multiple variants multiple time' do
+      it 'should remove two quantity for both variants' do
+        line_item1 = subject.add(variant, 3)
+        line_item2 = subject.add(variant2, 3)
+
+        line_items = subject.remove_many([variant, variant2, variant2, variant])
+
+        expect(line_item1.reload.quantity).to eq(1)
+        expect(line_item2.reload.quantity).to eq(1)
+      end
+    end
+
+    it "ensures updated shipments" do
+      subject.add(variant, 1)
+      expect(subject.order).to receive(:ensure_updated_shipments)
+      subject.remove_many([variant])
+    end
+
+    it 'should reduce line_item quantity if quantity is less the line_item quantity' do
+      line_item = subject.add(variant, 3)
+      subject.remove_many([variant])
+
+      expect(line_item.reload.quantity).to eq(2)
+    end
+
+    it 'should remove line_item if quantity matches line_item quantity' do
+      subject.add(variant, 1)
+      subject.remove_many([variant])
+
+      expect(order.reload.find_line_item_by_variant(variant)).to be_nil
+    end
+
+    it 'should remove line_item if quantity is greater than line_item quantity' do
+      subject.add(variant, 1)
+      subject.remove_many([variant, variant])
+
+      expect(order.reload.find_line_item_by_variant(variant)).to be_nil
+    end
+
+    it "should update order totals" do
+      expect(order.item_total.to_f).to eq(0.00)
+      expect(order.total.to_f).to eq(0.00)
+
+      subject.add(variant, 2)
+
+      expect(order.item_total.to_f).to eq(39.98)
+      expect(order.total.to_f).to eq(39.98)
+
+      subject.remove_many([variant])
+      expect(order.item_total.to_f).to eq(19.99)
+      expect(order.total.to_f).to eq(19.99)
+    end
+  end
+
   context "#remove_line_item" do
     context 'given a shipment' do
       it "ensure shipment calls update_amounts instead of order calling ensure_updated_shipments" do
@@ -243,6 +473,57 @@ RSpec.describe Spree::OrderContents, type: :model do
       subject.remove_line_item(line_item)
 
       expect(order.reload.line_items).to_not include(line_item)
+    end
+
+    it "should update order totals" do
+      expect(order.item_total.to_f).to eq(0.00)
+      expect(order.total.to_f).to eq(0.00)
+
+      line_item = subject.add(variant, 2)
+
+      expect(order.item_total.to_f).to eq(39.98)
+      expect(order.total.to_f).to eq(39.98)
+
+      subject.remove_line_item(line_item)
+      expect(order.item_total.to_f).to eq(0.00)
+      expect(order.total.to_f).to eq(0.00)
+    end
+  end
+
+  context "#remove_line_items", :focus do
+    it "ensures updated shipments" do
+      line_item = subject.add(variant, 1)
+      expect(subject.order).to receive(:ensure_updated_shipments)
+      subject.remove_line_items([line_item])
+    end
+
+    context 'when passing a single line item' do
+      it 'should remove line_item' do
+        line_item = subject.add(variant, 1)
+        subject.remove_line_items([line_item])
+
+        expect(order.reload.line_items).to_not include(line_item)
+      end
+    end
+
+    context 'when passing the same line item twice' do
+      it 'should remove line_item' do
+        line_item = subject.add(variant, 1)
+        subject.remove_line_items([line_item, line_item])
+
+        expect(order.reload.line_items).to_not include(line_item)
+      end
+    end
+
+    context 'when passing two line items' do
+      it 'should remove both line_items' do
+        line_item1 = subject.add(variant, 1)
+        line_item2 = subject.add(variant, 1)
+
+        subject.remove_line_items([line_item1, line_item2])
+
+        expect(order.reload.line_items).to_not include(line_item1, line_item2)
+      end
     end
 
     it "should update order totals" do
